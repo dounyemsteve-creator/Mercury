@@ -1,63 +1,49 @@
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
-const path = require('path');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json());
+app.use(express.static('public'));
 
-// Serve static frontend files from public directory
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Read eBay Credentials safely from Render Environment Variables
-const CLIENT_ID = process.env.EBAY_CLIENT_ID;
-const CLIENT_SECRET = process.env.EBAY_CLIENT_SECRET;
-
-// Helper function to fetch OAuth Application Token from eBay
-async function getEbayToken() {
-  const auth = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
-  const response = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${auth}`
-    },
-    body: 'grant_type=client_credentials&scope=https://api.ebay.com/oauth/api_scope'
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error_description || 'Failed to authenticate with eBay');
-  }
-  return data.access_token;
-}
-
-// Proxy Endpoint: Fetch live eBay products for the search bar & homepage
+// Search endpoint to query eBay items
 app.get('/api/search', async (req, res) => {
+  const query = req.query.q || 'drone';
+  const token = process.env.EBAY_TOKEN;
+
+  if (!token) {
+    return res.status(500).json({ error: 'EBAY_TOKEN environment variable is not set.' });
+  }
+
   try {
-    const query = req.query.q || 'electronics';
-    const token = await getEbayToken();
-    
-    const ebayResponse = await fetch(`https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(query)}&limit=15`, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US'
+    const response = await fetch(
+      `https://api.ebay.com/buy/browse/v1/item_summary/search?q=${encodeURIComponent(query)}&limit=10`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US'
+        }
       }
-    });
-    
-    const data = await ebayResponse.json();
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json(data);
+    }
+
     res.json(data);
   } catch (error) {
-    console.error('eBay API Proxy Error:', error.message);
-    res.status(500).json({ error: 'Failed to fetch live products from eBay API' });
+    console.error('Error fetching from eBay API:', error);
+    res.status(500).json({ error: 'Failed to communicate with eBay API' });
   }
 });
 
-// Fallback route to serve index.html
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`MERCADO Server running on port ${PORT}`));
